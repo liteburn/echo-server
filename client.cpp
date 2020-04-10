@@ -17,9 +17,9 @@ int main(int argc,char **argv)
     bzero(&serv_addr,sizeof serv_addr);
  
     serv_addr.sin_family=AF_INET;
-    serv_addr.sin_port=htons(22000);
+    serv_addr.sin_port=htons(20001);
  
-    inet_pton(AF_INET,"127.0.0.1",&(serv_addr.sin_addr));
+    inet_pton(AF_INET,"localhost",&(serv_addr.sin_addr));
  
     connect(cli_sock,(struct sockaddr *)&serv_addr,sizeof(serv_addr));
  
@@ -32,7 +32,7 @@ int main(int argc,char **argv)
         write(cli_sock,send,strlen(send)+1);
         read(cli_sock,recv,100);
 
-        printf("\n%s",recv);
+        printf("\n%s\n",recv);
     }
  
 }
