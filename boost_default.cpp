@@ -5,6 +5,8 @@
 #include <deque>
 #include <boost/enable_shared_from_this.hpp>
 
+#define THREADS 10
+
 using boost::asio::ip::tcp;
 
 
@@ -29,44 +31,32 @@ public:
 
     void start()
     {
-
         socket_.async_read_some(boost::asio::buffer(data_, max_length),
-                                boost::bind(&session::handle_read, shared_from_this(),
+                                boost::bind(&session::done_read, shared_from_this(),
                                             boost::asio::placeholders::error,
                                             boost::asio::placeholders::bytes_transferred));
+   }
 
-        socket_.async_write_some(boost::asio::buffer(data_, max_length),
-                                 boost::bind(&session::handle_write, shared_from_this(),
-                                             boost::asio::placeholders::error));
-    }
-
-    void handle_read(const boost::system::error_code& error,
+    void done_read(const boost::system::error_code& error,
                      size_t bytes_transferred)
     {
         if (!error)
         {
-            //std::cout << "Have read the text: " << data_ << "\n";
-
+            socket_.async_write_some(boost::asio::buffer(data_, max_length),
+                                     boost::bind(&session::done_write, shared_from_this(),
+                                                 boost::asio::placeholders::error));
         }
         else
         {
             std::cout << error.message() << std::endl;
-            delete this;
+            socket_.close();
         }
 
     }
 
-    void handle_write(const boost::system::error_code& error)
+    void done_write(const boost::system::error_code& error)
     {
-        if (!error)
-        {
-            //std::cout << "Have written the text: "  << data_ << "\n";
-        }
-        else
-        {
-            std::cout << error.message() << std::endl;
-            delete this;
-        }
+        socket_.close();
     }
 
 private:
@@ -76,79 +66,42 @@ private:
 };
 
 
-template<class T>
-class concurrent_queue {
-private:
-    mutable std::mutex mut;
-    std::deque<T> queue;
-    std::condition_variable cv;
-
-
-public:
-    concurrent_queue() = default;
-
-    ~concurrent_queue() = default;
-
-    void push(T data) {
-        {
-            std::unique_lock<std::mutex> lg(mut);
-            queue.push_back(data);
-        }
-        cv.notify_one();
-    }
-
-    void pop(T& data) {
-        {
-            std::unique_lock<std::mutex> lg(mut);
-            cv.wait(lg, [this]() { return queue.size() > 0;});
-            data = queue.front();
-            queue.pop_front();
-        }
-    }
-};
-
-class server
+class server: public boost::enable_shared_from_this<server>
 {
 public:
-    server(boost::asio::io_service& io_service, short port, concurrent_queue<session::pointer>& que)
+    server(boost::asio::io_service& io_service, short port)
             : io_service_(io_service),
               acceptor_(io_service, tcp::endpoint(tcp::v4(), port))
     {
-       start(que);
+       start();
     }
 
-    void handle_accept(session::pointer new_session,
-                       const boost::system::error_code& error, concurrent_queue<session::pointer>& que)
+    void handle_accept(const session::pointer& new_session,
+                       const boost::system::error_code& error)
     {
         if (!error)
         {
             //std::cout << "connected\n";
-            //new_session->start();
-            que.push(std::ref(new_session));
+            new_session->start();
         }
-        start(que);
+        start();
     }
 
-private:
-    boost::asio::io_service& io_service_;
-    tcp::acceptor acceptor_;
-    void start(concurrent_queue<session::pointer>& que)
+    void start()
     {
         session::pointer new_session = session::create(io_service_);
 
         acceptor_.async_accept(new_session->socket(),
                                boost::bind(&server::handle_accept, this, new_session,
-                                           boost::asio::placeholders::error, std::ref(que)));
+                                           boost::asio::placeholders::error));
     }
+
+private:
+    boost::asio::io_service& io_service_;
+    tcp::acceptor acceptor_;
+    //tcp::socket socket_;
 };
 
-[[noreturn]] void handle_session(concurrent_queue<session::pointer>& que){
-    while (true){
-        session::pointer get_session;
-        que.pop(get_session);
-        get_session->start();
-    }
-}
 
 int main(int argc, char* argv[])
 {
@@ -160,16 +113,17 @@ int main(int argc, char* argv[])
             return 1;
         }
 
-        boost::asio::io_service io_service;
-        concurrent_queue<session::pointer> que;
-
-        server s(io_service, std::atoi(argv[1]), std::ref(que));
+        boost::asio::io_service io_service{THREADS};
+        server serv(io_service, std::atoi(argv[1]));
+        //std::make_shared<server>(io_service, std::atoi(argv[1]))->start();
+        //serv.start();
         std::vector<std::thread> workers;
-        for (int i=0; i<8; i++)
-            workers.emplace_back(handle_session, std::ref(que));
+        for (int i=0; i<THREADS; i++)
+            workers.emplace_back([&io_service] {io_service.run();});
         io_service.run();
         for (auto& w:workers)
             w.join();
+
     }
     catch (std::exception& e)
     {
