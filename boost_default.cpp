@@ -5,7 +5,7 @@
 #include <deque>
 #include <boost/enable_shared_from_this.hpp>
 
-#define THREADS 10
+#define THREADS 50
 
 using boost::asio::ip::tcp;
 
@@ -42,6 +42,7 @@ public:
     {
         if (!error)
         {
+            std::cout << data_ << std::endl;
             socket_.async_write_some(boost::asio::buffer(data_, max_length),
                                      boost::bind(&session::done_write, shared_from_this(),
                                                  boost::asio::placeholders::error));
@@ -69,11 +70,16 @@ private:
 class server: public boost::enable_shared_from_this<server>
 {
 public:
+    typedef boost::shared_ptr<server> pointer;
     server(boost::asio::io_service& io_service, short port)
             : io_service_(io_service),
               acceptor_(io_service, tcp::endpoint(tcp::v4(), port))
     {
-       start();
+    }
+
+    static pointer create(boost::asio::io_service& io_service, short port)
+    {
+        return pointer(new server(io_service, port));
     }
 
     void handle_accept(const session::pointer& new_session,
@@ -92,7 +98,7 @@ public:
         session::pointer new_session = session::create(io_service_);
 
         acceptor_.async_accept(new_session->socket(),
-                               boost::bind(&server::handle_accept, this, new_session,
+                               boost::bind(&server::handle_accept, shared_from_this(), new_session,
                                            boost::asio::placeholders::error));
     }
 
@@ -114,13 +120,11 @@ int main(int argc, char* argv[])
         }
 
         boost::asio::io_service io_service{THREADS};
-        server serv(io_service, std::atoi(argv[1]));
-        //std::make_shared<server>(io_service, std::atoi(argv[1]))->start();
-        //serv.start();
+        server::pointer serv = server::create(io_service, std::atoi(argv[1]));
+        serv->start();
         std::vector<std::thread> workers;
         for (int i=0; i<THREADS; i++)
             workers.emplace_back([&io_service] {io_service.run();});
-        io_service.run();
         for (auto& w:workers)
             w.join();
 
