@@ -19,12 +19,3 @@ add_executable(server boost_default.cpp)
 
 target_link_libraries(server ${Boost_LIBRARIES})
 target_link_libraries(server ws2_32 wsock32)
-
-add_executable(client boost_client.cpp)
-target_link_libraries(client ${Boost_LIBRARIES})
-target_link_libraries(client ws2_32 wsock32)
-
-add_executable(old old.cpp)
-target_link_libraries(old ${Boost_LIBRARIES})
-target_link_libraries(old ws2_32 wsock32)
-
