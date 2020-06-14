@@ -31,26 +31,28 @@ public:
 
     void start()
     {
-        socket_.async_read_some(boost::asio::buffer(data_, max_length),
+        async_read(socket_, boost::asio::buffer(data_, max_length), boost::asio::transfer_at_least(1),
                                 boost::bind(&session::done_read, shared_from_this(),
                                             boost::asio::placeholders::error,
                                             boost::asio::placeholders::bytes_transferred));
-   }
+    }
 
     void done_read(const boost::system::error_code& error,
-                     size_t bytes_transferred)
+                   size_t bytes_transferred)
     {
         if (!error)
         {
-            std::cout << data_ << std::endl;
-            socket_.async_write_some(boost::asio::buffer(data_, max_length),
-                                     boost::bind(&session::done_write, shared_from_this(),
-                                                 boost::asio::placeholders::error));
-        }
-        else
-        {
-            std::cout << error.message() << std::endl;
-            socket_.close();
+            if (bytes_transferred!=0){
+                async_write(socket_ ,boost::asio::buffer(data_, max_length),
+                            boost::bind(&session::done_write, shared_from_this(),
+                                        boost::asio::placeholders::error));
+            } else {
+                async_read(socket_,boost::asio::buffer(data_, max_length), boost::asio::transfer_at_least(1),
+                           boost::bind(&session::done_read, shared_from_this(),
+                                       boost::asio::placeholders::error,
+                                       boost::asio::placeholders::bytes_transferred));
+
+            }
         }
 
     }
@@ -87,7 +89,6 @@ public:
     {
         if (!error)
         {
-            //std::cout << "connected\n";
             new_session->start();
         }
         start();
@@ -125,8 +126,9 @@ int main(int argc, char* argv[])
         std::vector<std::thread> workers;
         for (int i=0; i<THREADS; i++)
             workers.emplace_back([&io_service] {io_service.run();});
-        for (auto& w:workers)
-            w.join();
+        io_service.run();
+        //for (auto& w:workers)
+        //    w.join();
 
     }
     catch (std::exception& e)
