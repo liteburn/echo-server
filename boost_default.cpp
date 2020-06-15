@@ -93,9 +93,6 @@ public:
         {
             session::pointer new_session = session::create(std::move(socket_));
             new_session->run();
-            //std::cout<< "ok"<< std::endl;
-        } else {
-            //std::cout<< "pepsok"<< std::endl;
         }
 
         start();
