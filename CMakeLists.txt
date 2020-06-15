@@ -11,11 +11,8 @@ find_package(Boost REQUIRED COMPONENTS system thread)
 
 
 include_directories(${Boost_INCLUDE_DIRS})
-#link_directories(${Boost_LIBRARY_DIRS})
-
 
 add_executable(server boost_default.cpp)
 
 
 target_link_libraries(server ${Boost_LIBRARIES})
-target_link_libraries(server ws2_32 wsock32)

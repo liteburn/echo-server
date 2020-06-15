@@ -2,13 +2,12 @@
 #include <boost/asio.hpp>
 #include <iostream>
 #include <boost/bind.hpp>
-#include <deque>
 #include <boost/enable_shared_from_this.hpp>
+#include <thread>
 
 #define THREADS 16
 
 using boost::asio::ip::tcp;
-
 
 class session : public boost::enable_shared_from_this<session>
 {
@@ -133,7 +132,7 @@ int main(int argc, char* argv[])
         server::pointer serv = server::create(std::ref(io_service), tcp::endpoint(tcp::v4(), std::atoi(argv[1])));
         serv->run();
         std::vector<std::thread> workers;
-        for (int i=0; i<THREADS; i++)
+        for (int i = 0; i < THREADS; i++)
             workers.emplace_back([&io_service] {io_service.run();});
         for (auto& w:workers)
             w.join();
