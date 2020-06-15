@@ -2,121 +2,124 @@
 #include <boost/asio.hpp>
 #include <iostream>
 #include <boost/bind.hpp>
+#include <deque>
 #include <boost/enable_shared_from_this.hpp>
-#include <boost/thread.hpp>
-#include <boost/lexical_cast.hpp>
-#include <boost/asio/buffer.hpp>
 
-#define THREADS 10
+#define THREADS 16
 
 using boost::asio::ip::tcp;
 
-class connection : public boost::enable_shared_from_this<connection>, private boost::asio::noncopyable
+
+class session : public boost::enable_shared_from_this<session>
 {
-    boost::asio::strand<boost::asio::io_context::executor_type> strand_;
-    tcp::socket socket_;
-    boost::array<char, 32> buffer_;
+        tcp::socket socket_;
+        boost::asio::streambuf data;
 public:
-    typedef boost::shared_ptr<connection> connection_ptr;
-   explicit connection(boost::asio::io_context& io_context)
-            : strand_(boost::asio::make_strand(io_context)),
-              socket_(strand_)
+    typedef boost::shared_ptr<session> pointer;
+    session(tcp::socket socket)
+            : socket_(std::move(socket))
     {
     }
 
-    boost::asio::ip::tcp::socket& socket()
+    tcp::socket& socket()
     {
         return socket_;
     }
 
+    static pointer create(tcp::socket socket)
+    {
+        return pointer(new session(std::move(socket)));
+    }
+    void run()
+    {
+        start();
+    }
+
     void start()
     {
-        boost::asio::async_read(socket_, boost::asio::buffer(buffer_), boost::asio::transfer_at_least(1),
-                                boost::bind(&connection::handle_read, shared_from_this(),
+        async_read(socket_, data, boost::asio::transfer_at_least(1),
+                                boost::bind(&session::done_read, shared_from_this(),
                                             boost::asio::placeholders::error,
                                             boost::asio::placeholders::bytes_transferred));
     }
 
-private:
-    void handle_read(const boost::system::error_code& e,
-                                 std::size_t bytes_transferred) {
-        if (!e) {
-            if (bytes_transferred != 0) {
-                boost::asio::async_write(socket_, boost::asio::buffer(buffer_),
-                                         boost::bind(&connection::handle_write, shared_from_this(),
-                                                     boost::asio::placeholders::error));
+    void done_read(const boost::system::error_code& error,
+                   size_t bytes_transferred)
+    {
+        if (!error)
+        {
+            if (bytes_transferred!=0){
+                async_write(socket_ , data,
+                            boost::bind(&session::done_write, shared_from_this(),
+                                        boost::asio::placeholders::error));
             } else {
-                boost::asio::async_read(socket_, boost::asio::buffer(buffer_), boost::asio::transfer_at_least(1),
-                                        boost::bind(&connection::handle_read, shared_from_this(),
-                                                    boost::asio::placeholders::error,
-                                                    boost::asio::placeholders::bytes_transferred));
+                async_read(socket_, data, boost::asio::transfer_at_least(1),
+                           boost::bind(&session::done_read, shared_from_this(),
+                                       boost::asio::placeholders::error,
+                                       boost::asio::placeholders::bytes_transferred));
+
             }
         }
+
     }
 
-    void handle_write(const boost::system::error_code& e)
+    void done_write(const boost::system::error_code& error)
     {
-        if (!e)
-        {
-            socket_.close();
-        }
+        socket_.close();
     }
 };
 
 
-class server : private boost::asio::noncopyable
+class server: public boost::enable_shared_from_this<server>
 {
 public:
-    server(const boost::asio::ip::tcp::endpoint &endpoint, size_t thread_pool_size)
-            : thread_pool_size_(thread_pool_size),
-              acceptor_(io_context_)
-
+    typedef boost::shared_ptr<server> pointer;
+    server(boost::asio::io_service& io_service, const boost::asio::ip::tcp::endpoint &endpoint)
+            : io_service_(io_service),
+              acceptor_(io_service, endpoint),
+              socket_(io_service)
     {
-        boost::system::error_code ec;
-        acceptor_.open(endpoint.protocol(), ec);
-        acceptor_.bind(endpoint, ec);
-        acceptor_.set_option(boost::asio::ip::tcp::acceptor::reuse_address(true));
-        acceptor_.listen(boost::asio::socket_base::max_listen_connections, ec);
-        start_accept();
+
+    }
+
+    static pointer create(boost::asio::io_service& io_service, const tcp::endpoint &endpoint)
+    {
+        return pointer(new server(io_service, endpoint));
+    }
+
+    void handle_accept(const boost::system::error_code& error)
+    {
+        if (!error)
+        {
+            session::pointer new_session = session::create(std::move(socket_));
+            new_session->run();
+            //std::cout<< "ok"<< std::endl;
+        } else {
+            //std::cout<< "pepsok"<< std::endl;
+        }
+
+        start();
+    }
+
+    void start()
+    {
+
+
+        acceptor_.async_accept(socket_,
+                               boost::bind(&server::handle_accept, shared_from_this(),
+                                           boost::asio::placeholders::error));
     }
 
     void run()
     {
-        std::vector<boost::shared_ptr<boost::thread> > threads;
-        for (std::size_t i = 0; i < thread_pool_size_; ++i)
-        {
-            boost::shared_ptr<boost::thread> thread(new boost::thread(
-                    boost::bind(&boost::asio::io_context::run, &io_context_)));
-            threads.push_back(thread);
-        }
-        for (auto & thread : threads)
-            thread->join();
+        start();
     }
 
 private:
-    void start_accept()
-    {
-        new_connection_.reset(new connection(io_context_));
-        acceptor_.async_accept(new_connection_->socket(),
-                               boost::bind(&server::handle_accept, this,
-                                           boost::asio::placeholders::error));
-    }
-
-    void handle_accept(const boost::system::error_code& e)
-    {
-        if (!e)
-        {
-            new_connection_->start();
-        }
-        start_accept();
-    }
-
-    std::size_t thread_pool_size_;
-    boost::asio::io_context io_context_;
-    boost::asio::ip::tcp::acceptor acceptor_;
-    connection::connection_ptr new_connection_;
+    boost::asio::io_service& io_service_;
+    tcp::acceptor acceptor_;
+    tcp::socket socket_;
 };
-
 
 
 int main(int argc, char* argv[])
@@ -129,8 +132,15 @@ int main(int argc, char* argv[])
             return 1;
         }
 
-        server s(tcp::endpoint(tcp::v4(), std::atoi(argv[1])), boost::lexical_cast<std::size_t>(THREADS));
-        s.run();
+        boost::asio::io_service io_service;
+        server::pointer serv = server::create(std::ref(io_service), tcp::endpoint(tcp::v4(), std::atoi(argv[1])));
+        serv->run();
+        std::vector<std::thread> workers;
+        for (int i=0; i<THREADS; i++)
+            workers.emplace_back([&io_service] {io_service.run();});
+        for (auto& w:workers)
+            w.join();
+
     }
     catch (std::exception& e)
     {
@@ -139,4 +149,3 @@ int main(int argc, char* argv[])
 
     return 0;
 }
-
